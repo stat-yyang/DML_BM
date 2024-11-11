@@ -5,8 +5,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.model_selection import KFold
 from sklearn.linear_model import LinearRegression
 from sklearn.base import clone
-from dataset import DoubleMLData
-from score import LinearScoreMixin
+from src.dataset import DoubleMLData
+from src.score import LinearScoreMixin
+import copy
 
 class DML_BM:
     def __init__(self, obj_dml_data, ml_g=None, ml_m=None, n_folds=5):
@@ -38,10 +39,10 @@ class DML_BM:
         # Fit nuisance model for g across all modalities
         for idx, (train_index, test_index) in enumerate(smpls):
             g_model = clone(self._ml_g)
-            predictors = self._dml_data.predictor_dict['y']
+            predictors = self._dml_data.predictor_dict['Y']
             
             X_train = self._dml_data.covariates.iloc[train_index][predictors]
-            Y_train = self._dml_data.y.iloc[train_index]['y']
+            Y_train = self._dml_data.y.iloc[train_index]['Y']
 
             # Fit the model on training data
             g_model.fit(X_train, Y_train)
@@ -118,7 +119,7 @@ class DML_BM:
         m_models, m_hat = self._nuisance_est_modalites(smpls)
         
         missing_mask = self._dml_data.compute_missing_mask()
-        df_modalities_long_copy = self._dml_data._df_modalities_long.iloc[:, 1:].copy()
+        df_modalities_long_copy = copy.deepcopy(self._dml_data._df_modalities_long.iloc[:, 1:])
 
         # Ensure the missing_mask and m_hat have the same shape
         if missing_mask.shape != m_hat.shape:

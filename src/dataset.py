@@ -258,7 +258,7 @@ if __name__ == "__main__":
 
     # Predictor dictionary
     predictor_dict = {
-        'y': ['age', 'BMI'],
+        'Y': ['age', 'BMI'],
         'gene_expr1': ['age'],
         'gene_expr2': ['BMI'],
         'metabolite1': ['age'],

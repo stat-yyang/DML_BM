@@ -57,9 +57,13 @@ class LinearScoreMixin:
 
         score = self._compute_score(psi_elements, coef)
 
+        print(score)
         # Estimate variance and standard error using pseudo-inverse for stability
         j_hat = np.mean(psi_a, axis=0)
         j_hat_inv = np.linalg.inv(j_hat) if j_hat.ndim == 2 else 1.0 / j_hat
         var_hat = np.dot(np.dot(j_hat_inv, np.mean(np.einsum('ij,ik->ijk', score, score), axis=0)), j_hat_inv.T)
         se = np.sqrt(np.diag(var_hat) / psi_b.shape[0])
+        print(j_hat)
+        print(var_hat)
+        print(psi_b)
         return se
