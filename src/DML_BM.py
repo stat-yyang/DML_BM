@@ -2,12 +2,16 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 from sklearn.base import clone
 from src.dataset import DoubleMLData
 from src.score import LinearScoreMixin
 import copy
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
 
 class DML_BM:
     def __init__(self, obj_dml_data, ml_g=None, ml_m=None, n_folds=5):
@@ -21,9 +25,9 @@ class DML_BM:
         - n_folds (int): Number of folds for cross-fitting.
         """
         if ml_g is None:
-            ml_g = LinearRegression()
+            ml_g = Ridge(alpha=1.0)
         if ml_m is None:
-            ml_m = LinearRegression()
+            ml_m = Ridge(alpha=1.0)
         
         self._dml_data = obj_dml_data
         self._ml_g = ml_g
@@ -31,6 +35,7 @@ class DML_BM:
         self._n_folds = n_folds
         self._modality_names = list(self._dml_data.modality_names)
         self._summary = None
+        # self._theta = np.zeros(self._dml_data._df_modalities_long.size[1]-1)
 
     def _nuisance_est(self, smpls):
         g_models = []
@@ -50,6 +55,7 @@ class DML_BM:
             # Predict on the test data
             X_test = self._dml_data.covariates.iloc[test_index][predictors]
             g_hat[test_index] = g_model.predict(X_test).reshape(-1, 1)
+            # g_hat[test_index] = cross_val_predict(g_model, X_test, Y_train, cv=self._n_folds).reshape(-1, 1).reshape(-1, 1)
 
             # Store the model for each fold
             g_models.append(g_model)
@@ -74,14 +80,13 @@ class DML_BM:
 
                 m_model = clone(self._ml_m)
 
-                # Extract training data for the current feature, drop rows with missing values in X_train or D_train
                 X_train = self._dml_data.covariates.iloc[train_index][predictors]
                 D_train = self._dml_data._df_modalities_long.iloc[train_index][feature]
 
-                # Drop rows with NaN values in either X_train or D_train
-                valid_indices = X_train.index.intersection(D_train.dropna().index)
-                X_train = X_train.loc[valid_indices].dropna()
-                D_train = D_train.loc[valid_indices]
+                # # Drop rows with NaN values in either X_train or D_train
+                # valid_indices = X_train.index.intersection(D_train.dropna().index)
+                # X_train = X_train.loc[valid_indices].dropna()
+                # D_train = D_train.loc[valid_indices]
 
                 # Debugging to verify training data
                 print(f"Fold {idx}, Feature {feature}: X_train shape: {X_train.shape}, D_train shape: {D_train.shape}")
@@ -108,9 +113,6 @@ class DML_BM:
         return m_models, m_hat
 
     def _obtain_psi(self, smpls):
-        psi_a_folds = []
-        psi_b_folds = []
-
         g_models, g_hat = self._nuisance_est(smpls)
 
         # Residuals for outcome variable
@@ -118,47 +120,90 @@ class DML_BM:
 
         m_models, m_hat = self._nuisance_est_modalites(smpls)
         
-        missing_mask = self._dml_data.compute_missing_mask()
-        df_modalities_long_copy = copy.deepcopy(self._dml_data._df_modalities_long.iloc[:, 1:])
+        # missing_mask = self._dml_data.compute_missing_mask()
+        # df_modalities_long_copy = copy.deepcopy(self._dml_data._df_modalities_long.iloc[:, 1:])
 
-        # Ensure the missing_mask and m_hat have the same shape
-        if missing_mask.shape != m_hat.shape:
-            raise ValueError("The shapes of missing_mask and m_hat do not match. Please check the dimensions.")
+        # # Ensure the missing_mask and m_hat have the same shape
+        # if missing_mask.shape != m_hat.shape:
+        #     raise ValueError("The shapes of missing_mask and m_hat do not match. Please check the dimensions.")
 
-        # Ensure the missing_mask and df_modalities_long_copy have the same shape
-        if missing_mask.shape != df_modalities_long_copy.shape:
-            raise ValueError("The shapes of missing_mask and m_hat do not match. Please check the dimensions.")
+        # # Ensure the missing_mask and df_modalities_long_copy have the same shape
+        # if missing_mask.shape != df_modalities_long_copy.shape:
+        #     raise ValueError("The shapes of missing_mask and m_hat do not match. Please check the dimensions.")
 
         # Update df_modalities_long_copy with m_hat values where missing_mask is True
-        df_modalities_long_copy = df_modalities_long_copy.mask(missing_mask, m_hat)
+        # df_modalities_long_copy = df_modalities_long_copy.mask(missing_mask, m_hat)
         # df_modalities_long_copy[missing_mask] = m_hat[missing_mask]
         # df_modalities_long_copy[missing_mask == 1] = m_hat[missing_mask == 1]
-        res_d = df_modalities_long_copy - m_hat
+        res_d = self._dml_data._df_modalities_long.iloc[:, 1:] - m_hat
+
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(res_y, cmap="bwr", center=0)
+        plt.title(f"res_y")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join('/work/users/y/y/yyang96/DML_BM/simulation/fig_dir', f"res_y.png"))
+        plt.close()
+
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(m_hat, cmap="bwr", center=0)
+        plt.title(f"m_hat")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join('/work/users/y/y/yyang96/DML_BM/simulation/fig_dir', f"m_hat.png"))
+        plt.close()
+
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(self._dml_data._df_modalities_long.iloc[:, 1:], cmap="bwr", center=0)
+        plt.title(f"m")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join('/work/users/y/y/yyang96/DML_BM/simulation/fig_dir', f"Z_prime.png"))
+        plt.close()
+
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(res_d, cmap="bwr", center=0)
+        plt.title(f"res_d")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join('/work/users/y/y/yyang96/DML_BM/simulation/fig_dir', f"res_d.png"))
+        plt.close()
+        
+
+
 
         # Ensure res_d and res_y are aligned for dot product
         if res_d.shape[0] != len(res_y):
             raise ValueError("The number of rows in res_d and res_y do not match for matrix multiplication.")
 
-        # Ensure res_y has the same shape as res_d for Hadamard product
-        res_y_identity = np.ones_like(res_d) * res_y.values.reshape(-1, 1)
+        print("res_d.shape")
+        print("res_y.shape")
+        print(res_d.shape)
+        print(res_y.shape)
 
         # Compute psi_a and psi_b
-        psi_a = np.einsum('ij,ik->ijk', res_d, df_modalities_long_copy)
-        psi_b = -res_d * res_y_identity
+        # psi_a = np.einsum('ij,ik->ijk', res_d, df_modalities_long_copy)
+        psi_a = np.einsum('ij,ik->ijk', res_d, res_d)
 
-        psi_a_folds.append(psi_a)
-        psi_b_folds.append(psi_b)
-
-        # Concatenate psi_a and psi_b across folds
-        psi_a = np.concatenate(psi_a_folds, axis=0)
-        psi_b = np.concatenate(psi_b_folds, axis=0)
+        # Ensure res_y has the same shape as res_d for Hadamard product
+        # res_y_identity = np.ones_like(res_d) * res_y.values.reshape(-1, 1)
+        # psi_b = -res_d * res_y_identity
+        res_y = np.array(res_y.values.tolist()).reshape(-1, 1)
+        # res_y = np.array(res_y.reshape(-1))
+        print(res_y.shape)
+        print(res_d.shape)
+        psi_b = res_d * res_y
 
         # Return psi_elements as a dictionary to be used in LinearScoreMixin
         psi_elements = {'psi_a': psi_a, 'psi_b': psi_b}
         return psi_elements
 
 
-    def fit(self):
+    def fit(self, plot=False, fig_dir='/work/users/y/y/yyang96/DML_BM/simulation/fig_dir'):
         """
         Fit the DML_BM model.
         """
@@ -171,14 +216,69 @@ class DML_BM:
         score = LinearScoreMixin()
         coef = score._est_coef(psi_elements)
         se = score._est_sd(psi_elements, coef)
+        scores = score._compute_score(psi_elements, coef)
+        self._psi_elements = psi_elements
         self.coef_ = coef
         self.se_ = se
 
         print(coef.shape)
         print(se.shape)
+
+        if plot:
+            self.plot_psi(psi_elements, scores, fig_dir, fig_dir)
         
         self._calc_summary_measures()
         return self
+
+    def plot_psi(self, psi_elements, scores, fig_dir_a, fig_dir_b):
+        # Ensure the directories exist
+        os.makedirs(fig_dir_a, exist_ok=True)
+        os.makedirs(fig_dir_b, exist_ok=True)
+
+        # Plot psi_a
+        psi_a = psi_elements['psi_a']
+        for i in range(psi_a.shape[0], 100):
+            plt.figure(figsize=(10, 10))
+            sns.heatmap(psi_a[i, :, :], cmap="bwr", center=0)
+            plt.title(f"Psi_a - Slice {i}")
+            plt.xlabel("Dimension 1")
+            plt.ylabel("Dimension 2")
+            plt.tight_layout()
+            plt.savefig(os.path.join(fig_dir_a, f"psi_a_slice_{i}.png"))
+            plt.close()
+
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(np.mean(psi_a, axis=0), cmap="bwr", center=0)
+        plt.title(f"Psi_a - mean")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join(fig_dir_a, f"psi_a_mean.png"))
+        plt.close()
+
+        # Plot psi_b
+        psi_b = psi_elements['psi_b']
+        print(psi_b)
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(psi_b, cmap="bwr", center=0)
+        plt.title(f"Psi_b - heatmap")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join(fig_dir_a, f"psi_b.png"))
+        plt.close()
+
+        # plot scores
+        print(scores)
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(scores, cmap="bwr", center=0)
+        plt.title(f"Scores - heatmap")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.tight_layout()
+        plt.savefig(os.path.join(fig_dir_a, f"scores.png"))
+        plt.close()
+
 
     @property
     def summary(self):

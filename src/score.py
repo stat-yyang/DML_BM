@@ -35,7 +35,7 @@ class LinearScoreMixin:
             j_hat = np.mean(psi_a, axis=0)
             print(j_hat.shape)
             j_hat_inv = np.linalg.inv(j_hat) if j_hat.ndim == 2 else 1.0 / j_hat
-            coef = - np.dot(j_hat_inv, np.mean(psi_b, axis=0))
+            coef = np.dot(j_hat_inv, np.mean(psi_b, axis=0))
         elif algorithm == "DML1":
             coefs = []
             for idx, (train_index, test_index) in enumerate(smpls):
@@ -43,7 +43,7 @@ class LinearScoreMixin:
                 psi_b_fold = psi_b[test_index]
                 j_hat_fold = np.mean(psi_a_fold, axis=0)
                 j_hat_fold_inv = np.linalg.inv(j_hat_fold) if j_hat_fold.ndim == 2 else 1.0 / j_hat_fold
-                coef_fold = - np.dot(j_hat_fold_inv, np.mean(psi_b_fold, axis=0))
+                coef_fold = np.dot(j_hat_fold_inv, np.mean(psi_b_fold, axis=0))
                 coefs.append(coef_fold)
             coef = np.mean(coefs, axis=0)
         else:
@@ -61,9 +61,11 @@ class LinearScoreMixin:
         # Estimate variance and standard error using pseudo-inverse for stability
         j_hat = np.mean(psi_a, axis=0)
         j_hat_inv = np.linalg.inv(j_hat) if j_hat.ndim == 2 else 1.0 / j_hat
-        var_hat = np.dot(np.dot(j_hat_inv, np.mean(np.einsum('ij,ik->ijk', score, score), axis=0)), j_hat_inv.T)
-        se = np.sqrt(np.diag(var_hat) / psi_b.shape[0])
+        sigma2_hat = np.dot(np.dot(j_hat_inv, np.mean(np.einsum('ij,ik->ijk', score, score), axis=0)), j_hat_inv.T)
+        se = np.sqrt(np.diag(sigma2_hat) / psi_b.shape[0])
         print(j_hat)
-        print(var_hat)
+        print(sigma2_hat.shape)
+        print("sigma2_hat")
+        print(sigma2_hat)
         print(psi_b)
         return se

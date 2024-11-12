@@ -5,9 +5,10 @@ from sklearn.impute import SimpleImputer
 from sklearn.model_selection import KFold
 from sklearn.linear_model import LinearRegression
 from sklearn.base import clone
+from sklearn.metrics import r2_score, mean_squared_error
 
 class DoubleMLData:
-    def __init__(self, y_df, df_modalities, covariates_df, predictor_dict, modality_names, scale=True):
+    def __init__(self, y_df, df_modalities, covariates_df, predictor_dict, modality_names, scale=False, complete_case=True, impute=True):
         """
         Initialize the DoubleMLData object.
 
@@ -17,33 +18,39 @@ class DoubleMLData:
         - covariates_df (pd.DataFrame): DataFrame containing covariate features with 'eid' as subject identifier.
         - predictor_dict (dict): Dictionary mapping each feature in y and modalities to their predictors in covariates.
         - modality_names (list of str): List of names for each modality.
+        - scale (bool): Whether to scale the dataframes.
+        - complete_case (bool): Whether to use only the intersection of all data frames (complete cases).
+        - impute (bool): Whether to impute the modalities.
         """
         self._validate_inputs(y_df, df_modalities, covariates_df, predictor_dict, modality_names)
 
         if scale:
-            self._scale_dataframes
-        
+            self._scale_dataframes()
+
         self._y_df = y_df.reset_index(drop=True)
         self._df_modalities = [df.reset_index(drop=True) for df in df_modalities]
         self._covariates_df = covariates_df.reset_index(drop=True)
         self._predictor_dict = predictor_dict.copy()
         self._modality_names = modality_names
+
+        # self._ensure_complete_case()
+
+        print(self.calculate_r2_for_modalities())
         
         # Set of unique eids across all datasets
         self._subject_ids = self._get_all_subject_ids()
 
-        # Assign feature names and align modalities properly
-        self._assign_modality_feature_names()
+        # Make sure each dataframe contains the same number of rows with matched eid
+        self._check_subject(complete_case)
 
         # Ensure each modality has proper feature names and check for overlap
         self._check_feature_name_overlap()
-        
-        # Check if data is complete case, otherwise apply mean imputation
-        self._ensure_complete_case()
-
-        self._check_subject()
 
         self._df_modalities_long = self._combine_modalities()
+
+        if impute:
+            # Impute missing modalities
+            self._impute_modalities()
 
 
     def _validate_inputs(self, y_df, df_modalities, covariates_df, predictor_dict, modality_names):
@@ -67,16 +74,27 @@ class DoubleMLData:
         if not isinstance(modality_names, list) or len(modality_names) != len(df_modalities):
             raise ValueError("modality_names must be a list with the same length as df_modalities.")
 
-    def _assign_modality_feature_names(self):
-        """Assign feature names to each modality DataFrame using the existing column names and align modalities with subject IDs."""
-        for idx, modality_df in enumerate(self._df_modalities):
-            modality_name = self._modality_names[idx]
-            feature_names = modality_df.columns[1:]  # Exclude 'eid'
-            modality_df.columns = ['eid'] + list(feature_names)
-            
-            # Reindex modality to match all subjects, filling missing values with NaN
-            modality_df = modality_df.set_index('eid').reindex(self._subject_ids).reset_index()
-            self._df_modalities[idx] = modality_df
+    def _get_complete_case(self, y_df, df_modalities, covariates_df):
+        """
+        Get the intersection of all subject IDs across y, modalities, and covariates to ensure complete cases.
+
+        Parameters:
+        - y_df (pd.DataFrame): Outcome DataFrame.
+        - df_modalities (list of pd.DataFrame): List of modality DataFrames.
+        - covariates_df (pd.DataFrame): Covariates DataFrame.
+
+        Returns:
+        - y_df, df_modalities, covariates_df: DataFrames containing only the complete cases.
+        """
+        common_eids = set(y_df['eid']).intersection(set(covariates_df['eid']))
+        for df in df_modalities:
+            common_eids = common_eids.intersection(set(df['eid']))
+
+        y_df = y_df[y_df['eid'].isin(common_eids)].reset_index(drop=True)
+        df_modalities = [df[df['eid'].isin(common_eids)].reset_index(drop=True) for df in df_modalities]
+        covariates_df = covariates_df[covariates_df['eid'].isin(common_eids)].reset_index(drop=True)
+
+        return y_df, df_modalities, covariates_df
 
     def _check_feature_name_overlap(self):
         """Check that there is no overlap between feature names in each modality DataFrame."""
@@ -94,6 +112,33 @@ class DoubleMLData:
             all_eids = all_eids.union(set(df['eid']))
         return all_eids
 
+    def _check_subject(self, complete_case):
+        """
+        Ensure all dataframes have the same number of rows with matching subjects.
+        If complete_case is True, use the intersection of all 'eid' columns and retain only common subjects.
+        If complete_case is False, use the union of all 'eid' columns, with missing subjects having NaN values.
+        """
+        if complete_case:
+            # Get the intersection of all unique 'eid' values across all dataframes
+            common_eids = set(self._y_df['eid']).intersection(set(self._covariates_df['eid']))
+            for df in self._df_modalities:
+                common_eids = common_eids.intersection(set(df['eid']))
+            all_eids = common_eids
+
+            # Retain only common subjects across all dataframes
+            self._y_df = self._y_df[self._y_df['eid'].isin(all_eids)].reset_index(drop=True)
+            self._df_modalities = [df[df['eid'].isin(all_eids)].reset_index(drop=True) for df in self._df_modalities]
+            self._covariates_df = self._covariates_df[self._covariates_df['eid'].isin(all_eids)].reset_index(drop=True)
+        else:
+            # Get the union of all unique 'eid' values across all dataframes
+            all_eids = self._subject_ids
+
+            # Reindex all dataframes to ensure consistency across subjects
+            self._y_df = self._y_df.set_index('eid').reindex(all_eids).reset_index()
+            self._df_modalities = [df.set_index('eid').reindex(all_eids).reset_index() for df in self._df_modalities]
+            self._covariates_df = self._covariates_df.set_index('eid').reindex(all_eids).reset_index()
+   
+   
     def _ensure_complete_case(self):
         """Ensure that the dataset is a complete case, if not apply mean imputation."""
         imputer = SimpleImputer(strategy='mean')
@@ -110,19 +155,6 @@ class DoubleMLData:
         # Impute covariates_df (excluding 'eid')
         if self._covariates_df.isnull().any().any():
             self._covariates_df.iloc[:, 1:] = imputer.fit_transform(self._covariates_df.iloc[:, 1:])
-
-    def _check_subject(self):
-        """
-        Ensure all dataframes have the same number of rows with matching subjects.
-        Missing subjects will have NaN values in their corresponding rows.
-        """
-        # Get the set of all unique 'eid' values across all dataframes
-        all_eids = self._subject_ids
-
-        # Reindex all dataframes to ensure consistency across subjects
-        self._y_df = self._y_df.set_index('eid').reindex(all_eids).reset_index()
-        self._df_modalities = [df.set_index('eid').reindex(all_eids).reset_index() for df in self._df_modalities]
-        self._covariates_df = self._covariates_df.set_index('eid').reindex(all_eids).reset_index()
    
     def _combine_modalities(self):
         """
@@ -163,28 +195,80 @@ class DoubleMLData:
         # Scale covariates_df (excluding 'eid')
         self._covariates_df.iloc[:, 1:] = scaler.fit_transform(self._covariates_df.iloc[:, 1:])
 
-    def impute_modalities(self, model):
+    def _impute_modalities(self, model=LinearRegression()):
         """
         Impute missing values in modalities using the given model.
 
         Parameters:
         - model: An estimator object implementing 'fit' and 'predict' methods.
         """
-        for idx, modality_df in enumerate(self._df_modalities):
-            modality_name = self._modality_names[idx]
-            for feature in modality_df.columns[1:]:
+        for idx, feature in enumerate(self._df_modalities_long.columns[1:]):
+            predictors = self._predictor_dict.get(feature, [])
+            # Filter rows where modality data is missing
+            missing_rows = self._df_modalities_long[feature].isna()
+            if missing_rows.any():
+                X_train = self._covariates_df.loc[~missing_rows, predictors]
+                y_train = self._df_modalities_long.loc[~missing_rows, feature]
+                X_test = self._covariates_df.loc[missing_rows, predictors]
+                model.fit(X_train, y_train)
+                self._df_modalities_long.loc[missing_rows, feature] = model.predict(X_test)
+
+        print("Impute all modalities successfully!")
+            
+    
+    def calculate_r2_for_modalities(self):
+        """
+        Calculate R^2 explained by the predictors for all features in the modalities.
+
+        Returns:
+        - r2_results (dict): Dictionary with modality names as keys and DataFrames containing R2, MSE, and Mean as values.
+        """
+        r2_results = {}
+        for modality_name, modality_df in zip(self._modality_names, self._df_modalities):
+            modality_r2 = []
+            modality_mse = []
+            modality_mean = []
+            
+            # Merge modality dataframe with covariates dataframe on 'eid'
+            merged_df = pd.merge(modality_df, self._covariates_df, on='eid', how='inner')
+            
+            for feature in modality_df.columns[1:]:  # Skip 'eid'
                 predictors = self._predictor_dict.get(feature, [])
+                if not predictors:
+                    continue
+                
+                X = merged_df[predictors].values
+                y = merged_df[feature].values
+                
+                # Fit linear regression model
+                model = LinearRegression()
+                model.fit(X, y)
+                
+                # Make predictions
+                y_pred = model.predict(X)
+                
+                # Calculate R2, MSE, and Mean
+                r2 = r2_score(y, y_pred)
+                mse = mean_squared_error(y, y_pred)
+                mean_value = np.mean(y)
+                
+                modality_r2.append(r2)
+                modality_mse.append(mse)
+                modality_mean.append(mean_value)
+            
+            # Store results in a DataFrame
+            results_df = pd.DataFrame({
+                'Feature': modality_df.columns[1:],
+                'R2': modality_r2,
+                'MSE': modality_mse,
+                'Mean': modality_mean
+            })
+            
+            r2_results[modality_name] = results_df
+        
+        return r2_results
 
-                # Filter rows where modality data is missing
-                missing_rows = modality_df[feature].isna()
-                if missing_rows.any():
-                    X_train = self._covariates_df.loc[~missing_rows, predictors]
-                    y_train = modality_df.loc[~missing_rows, feature]
-                    X_test = self._covariates_df.loc[missing_rows, predictors]
-
-                    model.fit(X_train, y_train)
-                    modality_df.loc[missing_rows, feature] = model.predict(X_test)
-
+    
     @property
     def y(self):
         """Return the outcome variable as a DataFrame."""

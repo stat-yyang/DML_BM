@@ -7,15 +7,15 @@ from src.dataset import DoubleMLData
 from matplotlib.lines import Line2D
 import copy
 
-def generate_simulated_data_for_doubleml(n_obs, p, modalities, covariate_effects, outcome_effects, outcome_effects_covariates, missing_prob=0.2, missing_mechanism='MCAR', scale=False, predictor_covariates_num = 200, feature_covariates_num = [10, 101]):
+def generate_simulated_data_for_doubleml(n_obs, p, modalities, covariate_effects, outcome_effects, outcome_effects_covariates, missing_prob=0.2, missing_mechanism='MCAR', scale=False, predictor_covariates_num = 200, feature_covariates_num = [10, 101], random_seed = 42):
     if not (0 <= missing_prob <= 1):
         raise ValueError("missing_prob must be between 0 and 1")
 
-    np.random.seed(42)
+    np.random.seed(random_seed)
     
     # Generate covariates (X)
-    # X = np.random.normal(0, 1, (n_obs, p))
-    X = np.random.randint(0, 3, size=(n_obs, p))
+    X = np.random.normal(0, 1, (n_obs, p))
+    # X = np.random.randint(0, 3, size=(n_obs, p))
     covariates_df = pd.DataFrame(X, columns=[f'X{i}' for i in range(p)])
     covariates_df.insert(0, 'eid', range(n_obs))
     
@@ -24,7 +24,7 @@ def generate_simulated_data_for_doubleml(n_obs, p, modalities, covariate_effects
     Z = {}
     Z_masked = {}
 
-    M = generate_missing_indicator(n_obs, len(modalities), missing_mechanism, covariates=X)
+    M = generate_missing_indicator(n_obs, len(modalities), missing_mechanism, missing_prob=missing_prob, covariates=X)
 
     predictor_dict = {'Y': [f'X{i}' for i in range(min(p, predictor_covariates_num))]} 
 
@@ -49,14 +49,22 @@ def generate_simulated_data_for_doubleml(n_obs, p, modalities, covariate_effects
         modality_df.insert(0, 'eid', range(n_obs))
         modality_df = modality_df.set_index('eid').reindex(covariates_df['eid']).reset_index()
         modality_df = modality_df.dropna().reset_index(drop=True)
-        df_modalities.append(modality_df)
 
+        print(modality_df.shape)
+        print("DataFrame Info:")
+        modality_df.info()
+        print("\nDataFrame Summary Statistics:")
+        print(modality_df.describe())
+
+        df_modalities.append(modality_df)
+        
 
     # Apply mask on outcome_effects_covariates using predictor_dict for Y
     y_covariates_mask = np.zeros((p,))
     y_covariates_indices = [int(covariate[1:]) for covariate in predictor_dict['Y']]
     y_covariates_mask[y_covariates_indices] = 1
     masked_outcome_effects_covariates = outcome_effects_covariates * y_covariates_mask
+    print(masked_outcome_effects_covariates)
     
     # Generate outcome (Y)
     Y = np.zeros(n_obs)
@@ -66,14 +74,6 @@ def generate_simulated_data_for_doubleml(n_obs, p, modalities, covariate_effects
         Y += Z[name] @ effects
     Y += X @ masked_outcome_effects_covariates + np.random.normal(0, 0.1, n_obs)
     y_df = pd.DataFrame({'eid': range(n_obs), 'Y': Y})
-
-    # Generate outcome (Y)
-    Y = np.zeros(n_obs)
-    for name, effects in outcome_effects.items():
-        Y += Z[name] @ effects
-    Y += X @ outcome_effects_covariates + np.random.normal(0, 0.1, n_obs)
-    y_df = pd.DataFrame({'eid': range(n_obs), 'Y': Y})
-
 
 
     # Remove duplicate entries in predictor_dict
